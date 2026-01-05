@@ -213,6 +213,32 @@ async fn get_vatsim_data(
     }
 }
 
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install CTRL+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
+
+    info!("Shutdown signal received, terminating gracefully");
+}
+
 fn app() -> axum::Router {
     let recorder_handle = PrometheusBuilder::new()
         .idle_timeout(MetricKindMask::ALL, Some(Duration::from_secs(40)))
@@ -248,6 +274,7 @@ async fn main() -> Result<(), String> {
     };
 
     axum::serve(listener, app().into_make_service())
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .unwrap();
 
